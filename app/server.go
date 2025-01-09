@@ -7,6 +7,20 @@ import (
 	"strings"
 )
 
+type Request struct {
+	method  string
+	path    string
+	headers map[string]string
+}
+
+type requestError struct {
+	message string
+}
+
+func (e *requestError) Error() string {
+	return e.message
+}
+
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
@@ -36,22 +50,48 @@ func handleConnections(conn net.Conn) {
 		fmt.Println("error reading bytes", err.Error())
 	}
 	requestString := string(requestBytes)
-	requestPath := getRequestPath(requestString)
-	if requestPath == "/" {
+	request, parseErr := parseRequest(requestString)
+	if parseErr != nil {
+		fmt.Println("The request string is invalid", err.Error())
+	}
+	if request.path == "/" {
 		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	} else if strings.Contains(requestPath, "echo") {
-		responseBody := strings.Split(requestPath[1:], "/")[1]
+	} else if strings.Contains(request.path, "echo") {
+		responseBody := strings.Split(request.path[1:], "/")[1]
 		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(responseBody), responseBody)
 
+		conn.Write([]byte(body))
+	} else if strings.EqualFold(request.path[1:], "user-agent") {
+		responseBody := request.headers["User-Agent"]
+		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(responseBody), responseBody)
 		conn.Write([]byte(body))
 	} else {
 		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 	}
 }
 
-func getRequestPath(str string) string {
-	requestLine := strings.Split(str, "\r\n")[0]
+func parseRequest(str string) (Request, error) {
+	requestLineString, rest, found := strings.Cut(str, "\r\n")
+	if !found {
+		return Request{}, &requestError{
+			message: "The request string can not be parsed",
+		}
+	}
 	// split by /n to get the request target
-	requestLineArray := strings.Split(requestLine, " ")
-	return requestLineArray[1]
+	requestLineArray := strings.Split(requestLineString, " ")
+	var request Request
+	request.method = requestLineArray[0]
+	request.path = requestLineArray[1]
+	request.headers = make(map[string]string)
+	headersLineArray := strings.Split(rest, "\r\n")
+	for _, item := range headersLineArray[:len(headersLineArray)-1] {
+		// split the headers to get the key value
+		// strings.Cut should also work
+		if len(item) < 1 {
+			continue
+		}
+		headerkeyValue := strings.SplitN(item, ":", 2)
+		request.headers[headerkeyValue[0]] = strings.TrimSpace(headerkeyValue[1])
+	}
+	return request, nil
 }
