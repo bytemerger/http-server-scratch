@@ -28,6 +28,8 @@ func main() {
 }
 
 func handleConnections(conn net.Conn) {
+	//close connection after each request
+	defer conn.Close()
 	var requestBytes = make([]byte, 1024)
 	_, err := conn.Read(requestBytes)
 	if err != nil {
@@ -35,13 +37,15 @@ func handleConnections(conn net.Conn) {
 	}
 	requestString := string(requestBytes)
 	requestPath := getRequestPath(requestString)
-	if requestPath != "/" {
-		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
-		conn.Close()
-
-	} else {
+	if requestPath == "/" {
 		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-		conn.Close()
+	} else if strings.Contains(requestPath, "echo") {
+		responseBody := strings.Split(requestPath[1:], "/")[1]
+		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(responseBody), responseBody)
+
+		conn.Write([]byte(body))
+	} else {
+		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 	}
 }
 
