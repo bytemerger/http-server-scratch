@@ -36,7 +36,7 @@ func handleConnections(conn net.Conn) {
 	requestString := string(requestBytes)
 	requestPath := getRequestPath(requestString)
 	if requestPath != "/" {
-		conn.Write([]byte("HTTP/1.1 404 NOT FOUND\r\n\r\n"))
+		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 		conn.Close()
 
 	} else {
