@@ -1,12 +1,80 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
+
+type Response struct {
+	code    int
+	status  string
+	headers map[string]string
+	body    []byte
+}
+
+func (res *Response) compressBody(encoding string) error {
+	if encoding == "gzip" {
+		var b bytes.Buffer
+		gz := gzip.NewWriter(&b)
+		_, err := gz.Write(res.body)
+		if err != nil {
+			return &buildResponseError{
+				message: "An error occured while compressing the body",
+			}
+		}
+		if err = gz.Flush(); err != nil {
+			return &buildResponseError{
+				message: "An error occured while compressing the body",
+			}
+		}
+		if err = gz.Close(); err != nil {
+			return &buildResponseError{
+				message: "An error occured while compressing the body",
+			}
+		}
+		res.body = b.Bytes()
+		return nil
+	}
+	return &buildResponseError{
+		message: "compression not supported",
+	}
+}
+
+func (res *Response) buildResponse(req *Request) string {
+	allowedCompressions := []string{"gzip"}
+	requestLine := fmt.Sprintf("HTTP/1.1 %d %v\r\n", res.code, res.status)
+
+	// check for compression "Accept-Encoding"
+
+	if reqEncodingVals, ok := req.headers["Accept-Encoding"]; ok {
+		vals := strings.Split(reqEncodingVals, ", ")
+		var allowedReqEncoding []string
+		for _, item := range vals {
+			if slices.Contains(allowedCompressions, item) {
+				allowedReqEncoding = append(allowedReqEncoding, item)
+			}
+		}
+		// finally compress the body
+		if len(allowedReqEncoding) > 0 {
+			res.compressBody(allowedReqEncoding[0])
+			res.headers["Content-Encoding"] = allowedReqEncoding[0]
+		}
+	}
+
+	res.headers["Content-Length"] = fmt.Sprint(len(res.body))
+
+	var headersString string
+	for key, val := range res.headers {
+		headersString += fmt.Sprintf("%v: %v \r\n", key, val)
+	}
+	return fmt.Sprintf("%v%v\r\n%v", requestLine, headersString, string(res.body))
+}
 
 type Request struct {
 	method  string
@@ -20,6 +88,14 @@ type requestError struct {
 }
 
 func (e *requestError) Error() string {
+	return e.message
+}
+
+type buildResponseError struct {
+	message string
+}
+
+func (e *buildResponseError) Error() string {
 	return e.message
 }
 
@@ -62,12 +138,24 @@ func handleConnections(conn net.Conn) {
 		fmt.Println("The request string is invalid", err.Error())
 	}
 	if request.path == "/" {
-		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+		res := (&Response{
+			headers: map[string]string{},
+			code:    200,
+			status:  "OK",
+		}).buildResponse(&request)
+		conn.Write([]byte(res))
 	} else if strings.Contains(request.path, "echo") {
 		responseBody := strings.Split(request.path[1:], "/")[1]
-		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(responseBody), responseBody)
+		res := (&Response{
+			headers: map[string]string{
+				"Content-Type": "text/plain",
+			},
+			code:   200,
+			status: "OK",
+			body:   []byte(responseBody),
+		}).buildResponse(&request)
 
-		conn.Write([]byte(body))
+		conn.Write([]byte(res))
 	} else if strings.EqualFold(request.path[1:], "user-agent") {
 		responseBody := request.headers["User-Agent"]
 		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(responseBody), responseBody)
