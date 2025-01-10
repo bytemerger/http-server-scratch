@@ -13,7 +13,7 @@ import (
 
 type Response struct {
 	code    int
-	status  string
+	reason  string
 	headers map[string]string
 	body    []byte
 }
@@ -48,7 +48,7 @@ func (res *Response) compressBody(encoding string) error {
 
 func (res *Response) buildResponse(req *Request) string {
 	allowedCompressions := []string{"gzip"}
-	requestLine := fmt.Sprintf("HTTP/1.1 %d %v\r\n", res.code, res.status)
+	requestLine := fmt.Sprintf("HTTP/1.1 %d %v\r\n", res.code, res.reason)
 
 	// check for compression "Accept-Encoding"
 
@@ -74,6 +74,24 @@ func (res *Response) buildResponse(req *Request) string {
 		headersString += fmt.Sprintf("%v: %v \r\n", key, val)
 	}
 	return fmt.Sprintf("%v%v\r\n%v", requestLine, headersString, string(res.body))
+}
+
+func (res *Response) Ok(req *Request, code int) string {
+	res.headers = map[string]string{}
+	res.code = code
+	res.reason = "OK"
+	// reason is created for 201
+	if code == 201 {
+		res.reason = "Created"
+	}
+	return res.buildResponse(req)
+}
+
+func (res *Response) notFound(req *Request) string {
+	res.headers = map[string]string{}
+	res.code = 404
+	res.reason = "Not Found"
+	return res.buildResponse(req)
 }
 
 type Request struct {
@@ -138,11 +156,7 @@ func handleConnections(conn net.Conn) {
 		fmt.Println("The request string is invalid", err.Error())
 	}
 	if request.path == "/" {
-		res := (&Response{
-			headers: map[string]string{},
-			code:    200,
-			status:  "OK",
-		}).buildResponse(&request)
+		res := (&Response{}).Ok(&request, 200)
 		conn.Write([]byte(res))
 	} else if strings.Contains(request.path, "echo") {
 		responseBody := strings.Split(request.path[1:], "/")[1]
@@ -151,34 +165,53 @@ func handleConnections(conn net.Conn) {
 				"Content-Type": "text/plain",
 			},
 			code:   200,
-			status: "OK",
+			reason: "OK",
 			body:   []byte(responseBody),
 		}).buildResponse(&request)
 
 		conn.Write([]byte(res))
 	} else if strings.EqualFold(request.path[1:], "user-agent") {
 		responseBody := request.headers["User-Agent"]
-		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(responseBody), responseBody)
-		conn.Write([]byte(body))
+		res := (&Response{
+			headers: map[string]string{
+				"Content-Type": "text/plain",
+			},
+			code:   200,
+			reason: "OK",
+			body:   []byte(responseBody),
+		}).buildResponse(&request)
+		conn.Write([]byte(res))
 	} else if strings.Contains(request.path[1:], "file") {
 		fileName := strings.Split(request.path[1:], "/")[1]
 		if request.method == "POST" {
 			// write to the file instead
 			err := os.WriteFile(fileDirectory+fileName, request.body, 0644)
 			if err != nil {
-				conn.Write([]byte("HTTP/1.1 500 Server Error\r\n\r\n"))
+				res := (&Response{
+					code:   500,
+					reason: "Server Error",
+				}).buildResponse(&request)
+				conn.Write([]byte(res))
 			}
-			conn.Write([]byte("HTTP/1.1 201 Created\r\n\r\n"))
+			res := (&Response{}).Ok(&request, 201)
+			conn.Write([]byte(res))
 			return
 		}
 		fileContent, err := os.ReadFile(fileDirectory + fileName)
 		if err != nil {
-			conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+			conn.Write([]byte((&Response{}).notFound(&request)))
 		}
-		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %v\r\n\r\n%v", len(fileContent), string(fileContent))
-		conn.Write([]byte(body))
+		res := (&Response{
+			code:   200,
+			reason: "OK",
+			headers: map[string]string{
+				"Content-Type": "application/octet-stream",
+			},
+			body: fileContent,
+		}).buildResponse(&request)
+		conn.Write([]byte(res))
 	} else {
-		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+		conn.Write([]byte((&Response{}).notFound(&request)))
 	}
 }
 
