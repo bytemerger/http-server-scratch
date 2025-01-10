@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -73,6 +74,15 @@ func handleConnections(conn net.Conn) {
 		conn.Write([]byte(body))
 	} else if strings.Contains(request.path[1:], "file") {
 		fileName := strings.Split(request.path[1:], "/")[1]
+		if request.method == "POST" {
+			// write to the file instead
+			err := os.WriteFile(fileDirectory+fileName, request.body, 0644)
+			if err != nil {
+				conn.Write([]byte("HTTP/1.1 500 Server Error\r\n\r\n"))
+			}
+			conn.Write([]byte("HTTP/1.1 201 Created\r\n\r\n"))
+			return
+		}
 		fileContent, err := os.ReadFile(fileDirectory + fileName)
 		if err != nil {
 			conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
@@ -107,6 +117,20 @@ func parseRequest(str string) (Request, error) {
 		headerkeyValue := strings.SplitN(item, ":", 2)
 		request.headers[headerkeyValue[0]] = strings.TrimSpace(headerkeyValue[1])
 	}
-	request.body = []byte(headersLineArray[len(headersLineArray)-1])
+	remBody := []byte(headersLineArray[len(headersLineArray)-1])
+
+	contentLength, ok := request.headers["Content-Length"]
+	if !ok {
+		// then we dont know the content length return everything remaining
+		request.body = remBody
+		return request, nil
+	}
+	bodyLength, err := strconv.Atoi(contentLength)
+	if err != nil {
+		return Request{}, &requestError{
+			message: "Content-length can not be parsed properly expecting a number",
+		}
+	}
+	request.body = remBody[:bodyLength]
 	return request, nil
 }
