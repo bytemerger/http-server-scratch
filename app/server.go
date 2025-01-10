@@ -11,6 +11,7 @@ type Request struct {
 	method  string
 	path    string
 	headers map[string]string
+	body    []byte
 }
 
 type requestError struct {
@@ -23,7 +24,7 @@ func (e *requestError) Error() string {
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+	fmt.Println("application started !")
 
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
 	if err != nil {
@@ -44,6 +45,11 @@ func main() {
 func handleConnections(conn net.Conn) {
 	//close connection after each request
 	defer conn.Close()
+	// check if there is arg passed
+	var fileDirectory string
+	if len(os.Args) > 2 {
+		fileDirectory = os.Args[2]
+	}
 	var requestBytes = make([]byte, 1024)
 	_, err := conn.Read(requestBytes)
 	if err != nil {
@@ -64,6 +70,14 @@ func handleConnections(conn net.Conn) {
 	} else if strings.EqualFold(request.path[1:], "user-agent") {
 		responseBody := request.headers["User-Agent"]
 		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(responseBody), responseBody)
+		conn.Write([]byte(body))
+	} else if strings.Contains(request.path[1:], "file") {
+		fileName := strings.Split(request.path[1:], "/")[1]
+		fileContent, err := os.ReadFile(fileDirectory + fileName)
+		if err != nil {
+			conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+		}
+		body := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %v\r\n\r\n%v", len(fileContent), string(fileContent))
 		conn.Write([]byte(body))
 	} else {
 		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
@@ -93,5 +107,6 @@ func parseRequest(str string) (Request, error) {
 		headerkeyValue := strings.SplitN(item, ":", 2)
 		request.headers[headerkeyValue[0]] = strings.TrimSpace(headerkeyValue[1])
 	}
+	request.body = []byte(headersLineArray[len(headersLineArray)-1])
 	return request, nil
 }
